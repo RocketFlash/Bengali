@@ -6,7 +6,7 @@ from keras_preprocessing.image import ImageDataGenerator
 from sklearn.model_selection import train_test_split
 from keras.utils import to_categorical
 from keras_radam import RAdam
-from keras.callbacks.callbacks import ModelCheckpoint
+from keras.callbacks import ModelCheckpoint
 from keras.callbacks import TensorBoard, EarlyStopping, ReduceLROnPlateau
 from keras import regularizers, optimizers
 from PIL import Image
@@ -41,7 +41,7 @@ datagen = ImageDataGenerator(rescale=1./255.)
 test_datagen = ImageDataGenerator(rescale=1./255.)
 
 n_epochs = 1000
-batch_size = 32
+batch_size = 64
 
 train_generator = datagen.flow_from_dataframe(dataframe=train_df,
                                             directory=images_path_train,
@@ -95,6 +95,7 @@ x = keras.layers.Dropout(rate=0.5)(x)
 output_grapheme = keras.layers.Dense(n_classes_grapheme, 
                                      activation='softmax', 
                                      name = 'output_grapheme')(x)
+
 x = keras.layers.Dense(256, activation='relu')(x0)
 x = keras.layers.BatchNormalization()(x)
 x = keras.layers.Dropout(rate=0.5)(x)
@@ -107,6 +108,7 @@ x = keras.layers.Dropout(rate=0.5)(x)
 output_vowel = keras.layers.Dense(n_classes_vowel, 
                                   activation='softmax', 
                                   name = 'output_vowel')(x)
+
 x = keras.layers.Dense(256, activation='relu')(x0)
 x = keras.layers.BatchNormalization()(x)
 x = keras.layers.Dropout(rate=0.5)(x)
@@ -144,8 +146,7 @@ callbacks = [ModelCheckpoint(checkpoints_save_name ,
                 monitor='val_loss',
                 save_best_only=True, 
                 verbose=1),
-            #  TensorBoard(log_dir=tensorboard_save_name, 
-            #              histogram_freq=0),
+             TensorBoard(log_dir=tensorboard_save_name),
              EarlyStopping(monitor='val_loss',
                       patience=15, 
                       verbose=1),
@@ -161,6 +162,5 @@ model.fit_generator(generator=generator_wrapper(train_generator),
                     validation_data=generator_wrapper(val_generator),
                     validation_steps=STEP_SIZE_VALID,
                     epochs=n_epochs,
-                    use_multiprocessing=True,
                     verbose=1,
                     callbacks=callbacks)
