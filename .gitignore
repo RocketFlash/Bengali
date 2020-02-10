@@ -5,7 +5,7 @@ __pycache__/
 submission.csv
 # C extensions
 *.so
-
+.vscode
 # Distribution / packaging
 .Python
 build/
@@ -131,4 +131,4 @@ dmypy.json
 plots/
 logs/
 weights/
-
+work_dirs/
