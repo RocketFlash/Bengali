@@ -53,7 +53,7 @@ WIDTH = 236
 SIZE = 128
 
 n_epochs = 1
-batch_size = 64
+batch_size = 16
 
 work_dirs_path = 'work_dirs/'
 
@@ -87,8 +87,18 @@ columns = ['grapheme_root', 'vowel_diacritic', 'consonant_diacritic']
 images_path_train = os.path.join(DATASET_PATH, 'pngs/','train')
 images_path_test = os.path.join(DATASET_PATH, 'pngs/','test')
 
-datagen = ImageDataGenerator(rescale=1./255.)
-test_datagen = ImageDataGenerator(rescale=1./255.)
+data_generator_dict = dict(rescale=1./255.,
+                            # featurewise_center=False,
+                            # samplewise_center=False,
+                            rotation_range=45,
+                            width_shift_range=0.1,
+                            height_shift_range=0.1,
+                            shear_range=0.2,
+                            zoom_range=[0.9, 1.25],
+                            fill_mode='reflect')
+
+datagen = ImageDataGenerator(**data_generator_dict)
+test_datagen = ImageDataGenerator(**data_generator_dict)
 
 train_generator = datagen.flow_from_dataframe(dataframe=train_df,
                                             directory=images_path_train,
@@ -193,7 +203,7 @@ model.compile(optimizer=optimizer, loss = {'output_grapheme':'categorical_crosse
                                                  'output_consonant': 0.04}, 
                                  metrics=['accuracy'])
 
-keras.utils.plot_model(model, '{}{}_model.png'.format(plots_save_path, backbone_name))
+# keras.utils.plot_model(model, '{}{}_model.png'.format(plots_save_path, backbone_name))
 
 STEP_SIZE_TRAIN=train_generator.n//train_generator.batch_size
 STEP_SIZE_VALID=val_generator.n//val_generator.batch_size
