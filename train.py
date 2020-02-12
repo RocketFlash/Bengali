@@ -8,12 +8,20 @@ from keras.utils import to_categorical
 from keras_radam import RAdam
 from keras.callbacks import ModelCheckpoint
 from keras.callbacks import TensorBoard, EarlyStopping, ReduceLROnPlateau
+from ImageDataAugmentor.image_data_augmentor import *
 from keras import regularizers, optimizers
 from PIL import Image
 import keras
 import numpy as np
 import cv2
 import os
+from albumentations import (
+    CLAHE, Rotate,
+    Blur, GridDistortion, 
+    GaussNoise, MotionBlur,  
+    RandomBrightnessContrast, OneOf, Compose, Downscale,
+    ElasticTransform
+)
 
 def generator_wrapper(generator):
     n_classes = [168, 11, 7]
@@ -52,13 +60,13 @@ HEIGHT = 137
 WIDTH = 236
 SIZE = 128
 
-n_epochs = 1
-batch_size = 16
+n_epochs = 1000
+batch_size = 32
 
 work_dirs_path = 'work_dirs/'
 
 backbone_name = 'efficientnet-b5'
-config_name = backbone_name
+config_name = backbone_name + '_augmentations_albumentations'
 weights_save_path = os.path.join(work_dirs_path, config_name, 'weights/')
 logs_save_path = os.path.join(work_dirs_path, config_name, 'logs/')
 plots_save_path = os.path.join(work_dirs_path, config_name, 'plots/')
@@ -73,6 +81,16 @@ n_classes_consonant = 7
 # optimizer = optimizers.rmsprop(lr = 0.0001, decay = 1e-6)
 optimizer = RAdam(learning_rate=0.001)
 
+AUGMENTATIONS = Compose([OneOf([
+    Blur(always_apply=False, p=1.0, blur_limit=(3, 7)),
+    Downscale(always_apply=False, p=1.0, scale_min=0.3, scale_max=0.5, interpolation=0),
+    ElasticTransform(always_apply=False, p=1.0, alpha=0.6, sigma=16, alpha_affine=45, interpolation=0, border_mode=1),
+    GaussNoise(always_apply=False, p=1.0, var_limit=(10.0, 115.12999725341797)),
+    GridDistortion(always_apply=False, p=1.0, num_steps=6, distort_limit=(-0.5, 0.5), interpolation=0, border_mode=1),
+    MotionBlur(always_apply=False, p=1.0, blur_limit=(3, 20)),
+    Rotate(always_apply=False, p=1.0, limit=(-28, 28), interpolation=0, border_mode=1)
+    ], p=0.9)
+])
 # ==================================================================
 
 
@@ -87,22 +105,23 @@ columns = ['grapheme_root', 'vowel_diacritic', 'consonant_diacritic']
 images_path_train = os.path.join(DATASET_PATH, 'pngs/','train')
 images_path_test = os.path.join(DATASET_PATH, 'pngs/','test')
 
-data_generator_dict = dict(rescale=1./255.,
-                            # featurewise_center=False,
-                            # samplewise_center=False,
-                            rotation_range=45,
-                            width_shift_range=0.1,
-                            height_shift_range=0.1,
-                            shear_range=0.2,
-                            zoom_range=[0.9, 1.25],
-                            fill_mode='reflect')
+# data_generator_dict = dict(rescale=1./255.,
+#                             # featurewise_center=False,
+#                             # samplewise_center=False,
+#                             rotation_range=45,
+#                             width_shift_range=0.1,
+#                             height_shift_range=0.1,
+#                             shear_range=0.2,
+#                             zoom_range=[0.5, 1.5],
+#                             fill_mode='reflect')
 
-datagen = ImageDataGenerator(**data_generator_dict)
-test_datagen = ImageDataGenerator(**data_generator_dict)
+# datagen = ImageDataGenerator(**data_generator_dict)
+
+datagen =  ImageDataAugmentor(rescale=1./255, augment = AUGMENTATIONS, preprocess_input=None)
 
 train_generator = datagen.flow_from_dataframe(dataframe=train_df,
                                             directory=images_path_train,
-                                            color_mode='grayscale',
+                                            color_mode='gray',
                                             x_col="image_id",
                                             y_col=columns,
                                             batch_size=batch_size,
@@ -113,7 +132,7 @@ train_generator = datagen.flow_from_dataframe(dataframe=train_df,
 
 val_generator = datagen.flow_from_dataframe(dataframe=val_df,
                                             directory=images_path_train,
-                                            color_mode='grayscale',
+                                            color_mode='gray',
                                             x_col="image_id",
                                             y_col=columns,
                                             batch_size=batch_size,
@@ -143,7 +162,10 @@ else:
 # x0 = keras.layers.Flatten()(base_model.output)
 x0 = keras.layers.GlobalAveragePooling2D()(base_model.output)
 
-x = keras.layers.Dense(512, activation='relu')(x0)
+x = keras.layers.Dense(1024, activation='relu')(x0)
+x = keras.layers.BatchNormalization()(x)
+x = keras.layers.Dropout(rate=0.5)(x)
+x = keras.layers.Dense(512, activation='relu')(x)
 x = keras.layers.BatchNormalization()(x)
 x = keras.layers.Dropout(rate=0.5)(x)
 x = keras.layers.Dense(256, activation='relu')(x)
@@ -198,9 +220,9 @@ model.summary()
 model.compile(optimizer=optimizer, loss = {'output_grapheme':'categorical_crossentropy', 
                                          'output_vowel':'categorical_crossentropy',
                                          'output_consonant':'categorical_crossentropy'},
-                                 loss_weights = {'output_grapheme': 0.09,
-                                                 'output_vowel': 0.06,
-                                                 'output_consonant': 0.04}, 
+                                 loss_weights = {'output_grapheme': 1,
+                                                 'output_vowel': 0.08,
+                                                 'output_consonant': 0.08}, 
                                  metrics=['accuracy'])
 
 # keras.utils.plot_model(model, '{}{}_model.png'.format(plots_save_path, backbone_name))

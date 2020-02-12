@@ -1,0 +1,3 @@
+[submodule "ImageDataAugmentor"]
+	path = ImageDataAugmentor
+	url = git@github.com:RocketFlash/ImageDataAugmentor.git
