@@ -15,6 +15,7 @@ import keras
 import numpy as np
 import cv2
 import os
+from sklearn.utils import class_weight
 from albumentations import (
     CLAHE, Rotate,
     Blur, GridDistortion, 
@@ -22,6 +23,18 @@ from albumentations import (
     RandomBrightnessContrast, OneOf, Compose, Downscale,
     ElasticTransform
 )
+
+def get_class_weights(y):
+    classes = np.unique(y)
+    class_weights = class_weight.compute_class_weight('balanced', classes, y)
+    class_weights_dict = dict(zip(classes, class_weights))
+    return class_weights_dict
+
+def get_class_weights_dict(df,columns):
+    class_weights_total = {}
+    for col in columns:
+        class_weights_total[col] = get_class_weights(df[col])
+    return class_weights_total
 
 def generator_wrapper(generator):
     n_classes = [168, 11, 7]
@@ -66,7 +79,7 @@ batch_size = 32
 work_dirs_path = 'work_dirs/'
 
 backbone_name = 'efficientnet-b5'
-config_name = backbone_name + '_augmentations_albumentations'
+config_name = backbone_name + '_aug_alb_balance'
 weights_save_path = os.path.join(work_dirs_path, config_name, 'weights/')
 logs_save_path = os.path.join(work_dirs_path, config_name, 'logs/')
 plots_save_path = os.path.join(work_dirs_path, config_name, 'plots/')
@@ -99,11 +112,13 @@ full_df = pd.read_csv(train_csv_file)
 full_df['image_id'] = full_df['image_id'].apply(lambda x: x + '.png') 
 full_df.head()
 
-train_df, val_df = train_test_split(full_df, test_size=0.1)
-
 columns = ['grapheme_root', 'vowel_diacritic', 'consonant_diacritic']
 images_path_train = os.path.join(DATASET_PATH, 'pngs/','train')
 images_path_test = os.path.join(DATASET_PATH, 'pngs/','test')
+
+cl_weights = get_class_weights_dict(full_df, columns)
+
+train_df, val_df = train_test_split(full_df, test_size=0.1)
 
 # data_generator_dict = dict(rescale=1./255.,
 #                             # featurewise_center=False,
@@ -154,6 +169,8 @@ if backbone_name.startswith('efficientnet'):
     }
     Efficientnet_model = efficientnet_models[backbone_name]
     base_model = Efficientnet_model(input_shape=(128, 128, 1), weights=None, include_top=False)
+    checkpoints_load_name = 'work_dirs/efficientnet-b5_augmentations/weights/best_efficientnet-b5.hdf5'
+    base_model.load_weights(checkpoints_load_name, by_name=True)
 else:
     BaseModel, preprocess_input = Classifiers.get(backbone_name)
     base_model = BaseModel(input_shape=(128, 128, 1), weights=None, include_top=False)
@@ -246,13 +263,12 @@ callbacks = [ModelCheckpoint(checkpoints_save_name ,
                                patience=5, 
                                verbose=1)]
 
-# model.load_weights(checkpoints_save_name)
-
 history = model.fit_generator(generator=generator_wrapper(train_generator),
                     steps_per_epoch=STEP_SIZE_TRAIN,
                     validation_data=generator_wrapper(val_generator),
                     validation_steps=STEP_SIZE_VALID,
                     epochs=n_epochs,
+                    class_weight=cl_weights,
                     verbose=1,
                     callbacks=callbacks)
 
