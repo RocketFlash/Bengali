@@ -1,20 +1,15 @@
+import tensorflow as tf
 import pandas as pd
 import matplotlib.pyplot as plt
-from classification_models.keras import Classifiers
-import efficientnet.keras as efn
-from keras_preprocessing.image import ImageDataGenerator
+from classification_models.tfkeras import Classifiers
+import efficientnet.tfkeras as efn
 from sklearn.model_selection import train_test_split
-from keras.utils import to_categorical
-from keras_radam import RAdam
-from keras.callbacks import ModelCheckpoint
-from keras.callbacks import TensorBoard, EarlyStopping, ReduceLROnPlateau
 from ImageDataAugmentor.image_data_augmentor import *
-from keras import regularizers, optimizers
 from PIL import Image
-import keras
 import numpy as np
 import cv2
 import os
+os.environ["TF_KERAS"] = "1"
 from sklearn.utils import class_weight
 from albumentations import (
     CLAHE, Rotate,
@@ -23,6 +18,17 @@ from albumentations import (
     RandomBrightnessContrast, OneOf, Compose, Downscale,
     ElasticTransform
 )
+from tensorflow.keras.models import Model
+from tensorflow.keras.layers import Dense, BatchNormalization, Dropout, GlobalAveragePooling2D
+from tensorflow.keras.backend import sigmoid
+from tensorflow.keras.layers import Activation
+# from tensorflow.keras.utils.generic_utils import get_custom_objects
+# from tensorflow.keras_preprocessing.image import ImageDataGenerator
+from tensorflow.keras.utils import to_categorical
+from keras_radam import RAdam
+from tensorflow.keras.callbacks import ModelCheckpoint
+from tensorflow.keras.callbacks import TensorBoard, EarlyStopping, ReduceLROnPlateau
+from tensorflow.keras import regularizers, optimizers
 
 def get_class_weights(y):
     classes = np.unique(y)
@@ -30,10 +36,10 @@ def get_class_weights(y):
     class_weights_dict = dict(zip(classes, class_weights))
     return class_weights_dict
 
-def get_class_weights_dict(df,columns):
+def get_class_weights_dict(df,columns, output_names):
     class_weights_total = {}
-    for col in columns:
-        class_weights_total[col] = get_class_weights(df[col])
+    for col, o_n in zip(columns, output_names):
+        class_weights_total[o_n] = get_class_weights(df[col])
     return class_weights_total
 
 def generator_wrapper(generator):
@@ -79,7 +85,7 @@ batch_size = 32
 work_dirs_path = 'work_dirs/'
 
 backbone_name = 'efficientnet-b5'
-config_name = backbone_name + '_aug_alb_balance'
+config_name = backbone_name + '_aug_alb_balance_swish'
 weights_save_path = os.path.join(work_dirs_path, config_name, 'weights/')
 logs_save_path = os.path.join(work_dirs_path, config_name, 'logs/')
 plots_save_path = os.path.join(work_dirs_path, config_name, 'plots/')
@@ -106,17 +112,17 @@ AUGMENTATIONS = Compose([OneOf([
 ])
 # ==================================================================
 
-
 train_csv_file = os.path.join(DATASET_PATH, 'train.csv')
 full_df = pd.read_csv(train_csv_file)
 full_df['image_id'] = full_df['image_id'].apply(lambda x: x + '.png') 
 full_df.head()
 
 columns = ['grapheme_root', 'vowel_diacritic', 'consonant_diacritic']
+output_names = ['output_grapheme', 'output_vowel', 'output_consonant']
 images_path_train = os.path.join(DATASET_PATH, 'pngs/','train')
 images_path_test = os.path.join(DATASET_PATH, 'pngs/','test')
 
-cl_weights = get_class_weights_dict(full_df, columns)
+cl_weights = get_class_weights_dict(full_df, columns, output_names)
 
 train_df, val_df = train_test_split(full_df, test_size=0.1)
 
@@ -169,68 +175,65 @@ if backbone_name.startswith('efficientnet'):
     }
     Efficientnet_model = efficientnet_models[backbone_name]
     base_model = Efficientnet_model(input_shape=(128, 128, 1), weights=None, include_top=False)
-    checkpoints_load_name = 'work_dirs/efficientnet-b5_augmentations/weights/best_efficientnet-b5.hdf5'
+    checkpoints_load_name = 'work_dirs/efficientnet-b5_aug_alb_balance/weights/best_efficientnet-b5.hdf5'
     base_model.load_weights(checkpoints_load_name, by_name=True)
 else:
     BaseModel, preprocess_input = Classifiers.get(backbone_name)
     base_model = BaseModel(input_shape=(128, 128, 1), weights=None, include_top=False)
 
+activation_function_grapheme = 'swish'
+activation_function_vowel = 'swish'
+activation_function_consonant = 'swish'
 
 # x0 = keras.layers.Flatten()(base_model.output)
-x0 = keras.layers.GlobalAveragePooling2D()(base_model.output)
+x0 = GlobalAveragePooling2D()(base_model.output)
 
-x = keras.layers.Dense(1024, activation='relu')(x0)
-x = keras.layers.BatchNormalization()(x)
-x = keras.layers.Dropout(rate=0.5)(x)
-x = keras.layers.Dense(512, activation='relu')(x)
-x = keras.layers.BatchNormalization()(x)
-x = keras.layers.Dropout(rate=0.5)(x)
-x = keras.layers.Dense(256, activation='relu')(x)
-x = keras.layers.BatchNormalization()(x)
-x = keras.layers.Dropout(rate=0.5)(x)
-x = keras.layers.Dense(128, activation='relu')(x)
-x = keras.layers.BatchNormalization()(x)
-x = keras.layers.Dropout(rate=0.5)(x)
-x = keras.layers.Dense(64, activation='relu')(x)
-x = keras.layers.BatchNormalization()(x)
-x = keras.layers.Dropout(rate=0.5)(x)
-output_grapheme = keras.layers.Dense(n_classes_grapheme, 
+x = Dense(1024, activation=activation_function_grapheme, name = 'dense_grapheme_1')(x0)
+x = BatchNormalization()(x)
+x = Dropout(rate=0.5)(x)
+x = Dense(512, activation=activation_function_grapheme, name = 'dense_grapheme_2')(x)
+x = BatchNormalization()(x)
+x = Dropout(rate=0.5)(x)
+x = Dense(256, activation=activation_function_grapheme, name = 'dense_grapheme_3')(x)
+x = BatchNormalization()(x)
+x = Dropout(rate=0.5)(x)
+output_grapheme = Dense(n_classes_grapheme, 
                                      activation='softmax', 
                                      name = 'output_grapheme')(x)
 
-x = keras.layers.Dense(512, activation='relu')(x0)
-x = keras.layers.BatchNormalization()(x)
-x = keras.layers.Dropout(rate=0.5)(x)
-x = keras.layers.Dense(256, activation='relu')(x)
-x = keras.layers.BatchNormalization()(x)
-x = keras.layers.Dropout(rate=0.5)(x)
-x = keras.layers.Dense(128, activation='relu')(x)
-x = keras.layers.BatchNormalization()(x)
-x = keras.layers.Dropout(rate=0.5)(x)
-x = keras.layers.Dense(64, activation='relu')(x)
-x = keras.layers.BatchNormalization()(x)
-x = keras.layers.Dropout(rate=0.5)(x)
-output_vowel = keras.layers.Dense(n_classes_vowel, 
+x = Dense(512, activation=activation_function_vowel, name = 'dense_vowel_1')(x0)
+x = BatchNormalization()(x)
+x = Dropout(rate=0.5)(x)
+x = Dense(256, activation=activation_function_vowel, name = 'dense_vowel_2')(x)
+x = BatchNormalization()(x)
+x = Dropout(rate=0.5)(x)
+x = Dense(128, activation=activation_function_vowel, name = 'dense_vowel_3')(x)
+x = BatchNormalization()(x)
+x = Dropout(rate=0.5)(x)
+x = Dense(64, activation=activation_function_vowel, name = 'dense_vowel_4')(x)
+x = BatchNormalization()(x)
+x = Dropout(rate=0.5)(x)
+output_vowel = Dense(n_classes_vowel, 
                                   activation='softmax', 
                                   name = 'output_vowel')(x)
 
-x = keras.layers.Dense(512, activation='relu')(x0)
-x = keras.layers.BatchNormalization()(x)
-x = keras.layers.Dropout(rate=0.5)(x)
-x = keras.layers.Dense(256, activation='relu')(x)
-x = keras.layers.BatchNormalization()(x)
-x = keras.layers.Dropout(rate=0.5)(x)
-x = keras.layers.Dense(128, activation='relu')(x)
-x = keras.layers.BatchNormalization()(x)
-x = keras.layers.Dropout(rate=0.5)(x)
-x = keras.layers.Dense(64, activation='relu')(x)
-x = keras.layers.BatchNormalization()(x)
-x = keras.layers.Dropout(rate=0.5)(x)
-output_consonant = keras.layers.Dense(n_classes_consonant, 
+x = Dense(512, activation=activation_function_consonant, name = 'dense_consonant_1')(x0)
+x = BatchNormalization()(x)
+x = Dropout(rate=0.5)(x)
+x = Dense(256, activation=activation_function_consonant, name = 'dense_consonant_2')(x)
+x = BatchNormalization()(x)
+x = Dropout(rate=0.5)(x)
+x = Dense(128, activation=activation_function_consonant, name = 'dense_consonant_3')(x)
+x = BatchNormalization()(x)
+x = Dropout(rate=0.5)(x)
+x = Dense(64, activation=activation_function_consonant, name = 'dense_consonant_4')(x)
+x = BatchNormalization()(x)
+x = Dropout(rate=0.5)(x)
+output_consonant = Dense(n_classes_consonant, 
                                       activation='softmax', 
                                       name = 'output_consonant')(x)
 
-model = keras.models.Model(inputs=[base_model.input], 
+model = Model(inputs=[base_model.input], 
                            outputs=[output_grapheme, output_vowel, output_consonant])
 model.summary()
 
@@ -263,6 +266,8 @@ callbacks = [ModelCheckpoint(checkpoints_save_name ,
                                patience=5, 
                                verbose=1)]
 
+# checkpoints_load_name = 'work_dirs/efficientnet-b5_aug_alb_balance/weights/best_efficientnet-b5.hdf5'
+# model.load_weights(checkpoints_load_name, by_name=True)
 history = model.fit_generator(generator=generator_wrapper(train_generator),
                     steps_per_epoch=STEP_SIZE_TRAIN,
                     validation_data=generator_wrapper(val_generator),
