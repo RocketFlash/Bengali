@@ -19,7 +19,7 @@ from albumentations import (
     ElasticTransform
 )
 from tensorflow.keras.models import Model
-from tensorflow.keras.layers import Dense, BatchNormalization, Dropout, GlobalAveragePooling2D
+from tensorflow.keras.layers import Dense, BatchNormalization, Dropout, GlobalAveragePooling2D, Conv2D, Input
 from tensorflow.keras.backend import sigmoid
 from tensorflow.keras.layers import Activation
 # from tensorflow.keras.utils.generic_utils import get_custom_objects
@@ -79,13 +79,14 @@ HEIGHT = 137
 WIDTH = 236
 SIZE = 128
 
+freeze_backbone = True
 n_epochs = 1000
 batch_size = 32
 
 work_dirs_path = 'work_dirs/'
 
 backbone_name = 'efficientnet-b5'
-config_name = backbone_name + '_aug_alb_balance_swish'
+config_name = backbone_name + '_aug_alb_balance_swish_imagenet'
 weights_save_path = os.path.join(work_dirs_path, config_name, 'weights/')
 logs_save_path = os.path.join(work_dirs_path, config_name, 'logs/')
 plots_save_path = os.path.join(work_dirs_path, config_name, 'plots/')
@@ -98,7 +99,7 @@ n_classes_grapheme = 168
 n_classes_vowel = 11
 n_classes_consonant = 7
 # optimizer = optimizers.rmsprop(lr = 0.0001, decay = 1e-6)
-optimizer = RAdam(learning_rate=0.001)
+optimizer = RAdam(learning_rate=0.0001)
 
 AUGMENTATIONS = Compose([OneOf([
     Blur(always_apply=False, p=1.0, blur_limit=(3, 7)),
@@ -174,9 +175,13 @@ if backbone_name.startswith('efficientnet'):
         'efficientnet-b7': efn.EfficientNetB7,
     }
     Efficientnet_model = efficientnet_models[backbone_name]
-    base_model = Efficientnet_model(input_shape=(128, 128, 1), weights=None, include_top=False)
-    checkpoints_load_name = 'work_dirs/efficientnet-b5_aug_alb_balance/weights/best_efficientnet-b5.hdf5'
-    base_model.load_weights(checkpoints_load_name, by_name=True)
+    base_model = Efficientnet_model(input_shape=(128, 128, 3), weights='imagenet', include_top=False)
+    if freeze_backbone:
+        for layer in base_model.layers[:-2]:
+            layer.trainable = False
+
+    # checkpoints_load_name = 'work_dirs/efficientnet-b5_aug_alb_balance/weights/best_efficientnet-b5.hdf5'
+    # base_model.load_weights(checkpoints_load_name, by_name=True)
 else:
     BaseModel, preprocess_input = Classifiers.get(backbone_name)
     base_model = BaseModel(input_shape=(128, 128, 1), weights=None, include_top=False)
@@ -185,8 +190,11 @@ activation_function_grapheme = 'swish'
 activation_function_vowel = 'swish'
 activation_function_consonant = 'swish'
 
+input_layer = Input(shape=(128, 128, 1))
+conv_x = Conv2D(3, (3,3),padding='same')(input_layer)
+x0 = base_model(conv_x)
 # x0 = keras.layers.Flatten()(base_model.output)
-x0 = GlobalAveragePooling2D()(base_model.output)
+x0 = GlobalAveragePooling2D()(x0)
 
 x = Dense(1024, activation=activation_function_grapheme, name = 'dense_grapheme_1')(x0)
 x = BatchNormalization()(x)
@@ -233,7 +241,8 @@ output_consonant = Dense(n_classes_consonant,
                                       activation='softmax', 
                                       name = 'output_consonant')(x)
 
-model = Model(inputs=[base_model.input], 
+
+model = Model(inputs=[input_layer], 
                            outputs=[output_grapheme, output_vowel, output_consonant])
 model.summary()
 
