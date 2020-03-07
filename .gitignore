@@ -132,3 +132,4 @@ plots/
 logs/
 weights/
 work_dirs/
+core
