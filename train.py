@@ -23,6 +23,7 @@ from tensorflow.keras.layers import Dense, BatchNormalization, Dropout, GlobalAv
 from tensorflow.keras.backend import sigmoid
 from tensorflow.keras.layers import Activation, Lambda, Layer
 from iterstrat.ml_stratifiers import MultilabelStratifiedKFold, MultilabelStratifiedShuffleSplit
+from sklearn.model_selection import StratifiedKFold
 # from tensorflow.keras.utils.generic_utils import get_custom_objects
 # from tensorflow.keras_preprocessing.image import ImageDataGenerator
 from keras_radam import RAdam
@@ -35,7 +36,8 @@ import albumentations
 
 from keras_adabound import AdaBound
 from utils import plot_history, CustomReduceLRonPlateau, GridMask, GroupNormalization, get_class_weights_dict
-from utils import generator_wrapper, RandomAugMix
+from utils import generator_wrapper, RandomAugMix, focal_loss
+
 # CustomReduceLRonPlateau function
 best_val_loss = np.Inf
 
@@ -58,8 +60,8 @@ group_norm = True
 
 work_dirs_path = 'work_dirs/'
 
-backbone_name = 'efficientnet-b5'
-config_name = backbone_name + '_min_wn'
+backbone_name = 'efficientnet-b3'
+config_name = backbone_name + '_k_fold'
 weights_save_path = os.path.join(work_dirs_path, config_name, 'weights/')
 logs_save_path = os.path.join(work_dirs_path, config_name, 'logs/')
 plots_save_path = os.path.join(work_dirs_path, config_name, 'plots/')
@@ -73,16 +75,15 @@ n_classes_vowel = 11
 n_classes_consonant = 7
 # optimizer = optimizers.Adam(lr = 0.00016)
 # optimizer = RAdam(learning_rate=0.00016)
-optimizer = AdaBound(lr=0.000005,
+optimizer = AdaBound(lr=0.00001,
                      final_lr=.1)
 
 AUGMENTATIONS = Compose([GridMask(num_grid=(7,9), rotate=90,mode=0,p=1),
-    OneOf([
-    RandomAugMix(severity=1, width=1, p=1.),
-    Downscale(always_apply=False, p=0.5, scale_min=0.3, scale_max=0.5, interpolation=0),
-    ElasticTransform(always_apply=False, p=0.5, alpha=0.6, sigma=16, alpha_affine=45, interpolation=0, border_mode=1),
-    GridDistortion(always_apply=False, p=0.5, num_steps=6, distort_limit=(-0.3, 0.3)),
-    MotionBlur(always_apply=False, p=0.5, blur_limit=(3, 20)),
+    OneOf([ RandomAugMix(severity=1, width=1, p=1.),
+    # Downscale(always_apply=False, p=0.5, scale_min=0.3, scale_max=0.5, interpolation=0),
+    # ElasticTransform(always_apply=False, p=0.2, alpha=0.3, sigma=10, alpha_affine=25, interpolation=0, border_mode=1),
+    # GridDistortion(always_apply=False, p=0.2, num_steps=6, distort_limit=(-0.15, 0.15)),
+    # MotionBlur(always_apply=False, p=0.5, blur_limit=(3, 20)),
     ], p=0.95)
 ])
 # ==================================================================
@@ -188,9 +189,9 @@ model = Model(inputs=[base_model.input],
                            outputs=[output_grapheme, output_vowel, output_consonant])
 model.summary()
 
-model.compile(optimizer=optimizer, loss = {'output_grapheme':'categorical_crossentropy', 
-                                         'output_vowel':'categorical_crossentropy',
-                                         'output_consonant':'categorical_crossentropy'},
+model.compile(optimizer=optimizer, loss = {'output_grapheme':focal_loss(alpha=.25, gamma=2), 
+                                         'output_vowel':focal_loss(alpha=.25, gamma=2),
+                                         'output_consonant':focal_loss(alpha=.25, gamma=2)},
                                  loss_weights = {'output_grapheme': 1,
                                                  'output_vowel': 0.3,
                                                  'output_consonant': 0.3}, 
@@ -198,47 +199,47 @@ model.compile(optimizer=optimizer, loss = {'output_grapheme':'categorical_crosse
                                           'output_vowel': ['accuracy', tf.keras.metrics.Recall()],
                                           'output_consonant': ['accuracy', tf.keras.metrics.Recall()] })
 
+model.save_weights("model_initial.h5")
 
 
-checkpoints_save_name_pref = '{}_{}_'.format(weights_save_path,backbone_name)
-checkpoints_save_name = checkpoints_save_name_pref + 'gridmask_augmix_strat_augs' + '_{epoch:03d}_{val_output_grapheme_acc:.4f}.hdf5'
-tensorboard_save_name = '{}logs_{}/'.format(logs_save_path,backbone_name)
-
-callbacks = [ModelCheckpoint(checkpoints_save_name , 
-                monitor='val_loss', 
-                verbose=1,
-                save_best_only=True),
-            # TensorBoard(log_dir=tensorboard_save_name),
-             EarlyStopping(monitor='val_loss',
-                      patience=15, 
-                      verbose=1),
-             ReduceLROnPlateau(monitor='val_loss', 
-                               factor=0.5,
-                               patience=5, 
-                               verbose=1)]
-
-checkpoints_load_name = 'work_dirs/efficientnet-b5_min_wn/weights/_efficientnet-b5_gridmask_augmix_strat_augs_001_0.9371.hdf5'
-model.load_weights(checkpoints_load_name, by_name=True)
 
 train_csv_file = os.path.join(DATASET_PATH, 'train.csv')
 full_df = pd.read_csv(train_csv_file)
 full_df['image_id'] = full_df['image_id'].apply(lambda x: x + '.png') 
 full_df.head()
 
+# grapheme2idx = {grapheme: idx for idx, grapheme in enumerate(full_df.grapheme.unique())}
+# full_df['grapheme_id'] = full_df['grapheme'].map(grapheme2idx)
+
+# n_fold = 5
+# skf = StratifiedKFold(n_fold, random_state=42)
+# for i_fold, (train_idx, val_idx) in enumerate(skf.split(full_df, full_df.grapheme)):
+#     full_df.loc[val_idx, 'fold'] = i_fold
+# full_df['fold'] = full_df['fold'].astype(int)
+
+# full_df['unseen'] = 0
+# full_df.loc[full_df.grapheme_id >= 1245, 'unseen'] = 1
+
+# full_df.loc[full_df['unseen'] == 1, 'fold'] = -1
+
 X_train = full_df['image_id'].values
 f_df = full_df[columns].astype('uint8')
 for col in columns:
     f_df[col] = f_df[col].map('{:03}'.format)
 Y_train = pd.get_dummies(f_df)
-# train_df, val_df = train_test_split(full_df, test_size=0.05)
+train_df, val_df = train_test_split(full_df, test_size=0.05)
 
-EPOCHS = 100
+EPOCHS = 7
 TEST_SIZE = 1./6
 msss = MultilabelStratifiedShuffleSplit(n_splits = EPOCHS, test_size = TEST_SIZE, random_state = 42)
 datagen =  ImageDataAugmentor(rescale=1./255, augment = AUGMENTATIONS, preprocess_input=None)
+# msss = MultilabelStratifiedKFold
+n_epochs = 20
+checkpoints_load_name = 'work_dirs/efficientnet-b3_k_fold/weights/_efficientnet-b3__k_fold_shuffle_ep_0_019_0.9138.hdf5'
 
-full_history = {}
-for epoch, msss_splits in zip(range(0, EPOCHS), msss.split(X_train, Y_train)):
+for epoch_n, msss_splits in zip(range(0, EPOCHS), msss.split(X_train, Y_train)):
+    # model.load_weights("model_initial.h5")
+    model.load_weights(checkpoints_load_name, by_name=True)
     train_idx = msss_splits[0]
     valid_idx = msss_splits[1]
     np.random.shuffle(train_idx)
@@ -246,6 +247,32 @@ for epoch, msss_splits in zip(range(0, EPOCHS), msss.split(X_train, Y_train)):
     print('Valid Length: {0}    First 10 indices: {1}'.format(len(valid_idx), valid_idx[:10]))
     print(len(full_df))
     print(len(full_df.iloc[train_idx]))
+
+    checkpoints_save_name_pref = '{}_{}_'.format(weights_save_path,backbone_name)
+    checkpoints_save_name = checkpoints_save_name_pref + '_k_fold_shuffle_ep_'+str(epoch_n) + '_{epoch:03d}_{val_output_grapheme_acc:.4f}.hdf5'
+    tensorboard_save_name = '{}logs_{}/'.format(logs_save_path,backbone_name)
+
+    callbacks = [ModelCheckpoint(checkpoints_save_name , 
+                    monitor='val_loss', 
+                    verbose=1,
+                    save_best_only=True),
+                # TensorBoard(log_dir=tensorboard_save_name),
+                EarlyStopping(monitor='val_loss',
+                        patience=15, 
+                        verbose=1),
+                ReduceLROnPlateau(monitor='val_loss', 
+                                factor=0.5,
+                                patience=3, 
+                                verbose=1)]
+
+# n_fold = 5
+# for fold in range(n_fold):
+#     train_idx = np.where((full_df['fold'] != fold) & (full_df['unseen'] == 0))[0]
+#     valid_idx = np.where((full_df['fold'] == fold) | (full_df['unseen'] != 0))[0]
+
+#     df_this_train = full_df.loc[train_idx].reset_index(drop=True)
+#     df_this_valid = full_df.loc[valid_idx].reset_index(drop=True)
+
     cl_weights = get_class_weights_dict(full_df.iloc[train_idx], columns, output_names)
 
     train_generator = datagen.flow_from_dataframe(dataframe=full_df.iloc[train_idx],
@@ -277,7 +304,7 @@ for epoch, msss_splits in zip(range(0, EPOCHS), msss.split(X_train, Y_train)):
                         steps_per_epoch=STEP_SIZE_TRAIN,
                         validation_data=generator_wrapper(val_generator),
                         validation_steps=STEP_SIZE_VALID,
-                        epochs=1,
+                        epochs=n_epochs,
                         class_weight=cl_weights,
                         verbose=1,
                         callbacks=callbacks)
@@ -292,5 +319,5 @@ for epoch, msss_splits in zip(range(0, EPOCHS), msss.split(X_train, Y_train)):
     gc.collect()
 
 
-plot_history(full_history, plots_save_path)
+# plot_history(full_history, plots_save_path)
 	

@@ -133,3 +133,4 @@ logs/
 weights/
 work_dirs/
 core
+model_initial.h5
