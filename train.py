@@ -16,7 +16,8 @@ from albumentations import (
     Blur, GridDistortion, 
     GaussNoise, MotionBlur,  
     RandomBrightnessContrast, OneOf, Compose, Downscale,
-    ElasticTransform
+    ElasticTransform,
+    ShiftScaleRotate
 )
 from tensorflow.keras.models import Model
 from tensorflow.keras.layers import Dense, BatchNormalization, Dropout, GlobalAveragePooling2D, Conv2D, Input
@@ -27,7 +28,7 @@ from sklearn.model_selection import StratifiedKFold
 # from tensorflow.keras.utils.generic_utils import get_custom_objects
 # from tensorflow.keras_preprocessing.image import ImageDataGenerator
 from keras_radam import RAdam
-from tensorflow.keras.callbacks import ModelCheckpoint
+from tensorflow.keras.callbacks import ModelCheckpoint, LearningRateScheduler
 from tensorflow.keras.callbacks import TensorBoard, EarlyStopping, ReduceLROnPlateau
 from tensorflow.keras import regularizers, optimizers
 # from tensorflow.keras.engine import Layer
@@ -47,7 +48,7 @@ DATASET_PATH = '/home/rauf/datasets/bengali/'
 HEIGHT = 137
 WIDTH = 236
 SIZE = 128
-BATCH_SIZE = 32
+BATCH_SIZE = 64
 
 columns = ['grapheme_root', 'vowel_diacritic', 'consonant_diacritic']
 output_names = ['output_grapheme', 'output_vowel', 'output_consonant']
@@ -61,7 +62,7 @@ group_norm = True
 work_dirs_path = 'work_dirs/'
 
 backbone_name = 'efficientnet-b3'
-config_name = backbone_name + '_k_fold'
+config_name = backbone_name + '_k_fold_tuning'
 weights_save_path = os.path.join(work_dirs_path, config_name, 'weights/')
 logs_save_path = os.path.join(work_dirs_path, config_name, 'logs/')
 plots_save_path = os.path.join(work_dirs_path, config_name, 'plots/')
@@ -74,17 +75,19 @@ n_classes_grapheme = 168
 n_classes_vowel = 11
 n_classes_consonant = 7
 # optimizer = optimizers.Adam(lr = 0.00016)
-# optimizer = RAdam(learning_rate=0.00016)
-optimizer = AdaBound(lr=0.00001,
-                     final_lr=.1)
+optimizer = RAdam(learning_rate=0.000016)
+# optimizer = AdaBound(lr=0.00001,
+#                      final_lr=.1)
 
-AUGMENTATIONS = Compose([GridMask(num_grid=(7,9), rotate=90,mode=0,p=1),
-    OneOf([ RandomAugMix(severity=1, width=1, p=1.),
-    # Downscale(always_apply=False, p=0.5, scale_min=0.3, scale_max=0.5, interpolation=0),
-    # ElasticTransform(always_apply=False, p=0.2, alpha=0.3, sigma=10, alpha_affine=25, interpolation=0, border_mode=1),
-    # GridDistortion(always_apply=False, p=0.2, num_steps=6, distort_limit=(-0.15, 0.15)),
-    # MotionBlur(always_apply=False, p=0.5, blur_limit=(3, 20)),
-    ], p=0.95)
+AUGMENTATIONS = Compose([
+    # GridMask(num_grid=(7,9), rotate=90,mode=0,p=0.5),
+    ShiftScaleRotate(shift_limit=(-0.01,0.01), scale_limit=(-0.1,0.1), rotate_limit=(-5,5), p=0.8),
+    # OneOf([ RandomAugMix(severity=1, width=1, p=1.),
+    # # Downscale(always_apply=False, p=0.5, scale_min=0.3, scale_max=0.5, interpolation=0),
+    # # ElasticTransform(always_apply=False, p=0.2, alpha=0.3, sigma=10, alpha_affine=25, interpolation=0, border_mode=1),
+    # # GridDistortion(always_apply=False, p=0.2, num_steps=6, distort_limit=(-0.15, 0.15)),
+    # # MotionBlur(always_apply=False, p=0.5, blur_limit=(3, 20)),
+    # ], p=0.95)
 ])
 # ==================================================================
 
@@ -189,9 +192,15 @@ model = Model(inputs=[base_model.input],
                            outputs=[output_grapheme, output_vowel, output_consonant])
 model.summary()
 
-model.compile(optimizer=optimizer, loss = {'output_grapheme':focal_loss(alpha=.25, gamma=2), 
-                                         'output_vowel':focal_loss(alpha=.25, gamma=2),
-                                         'output_consonant':focal_loss(alpha=.25, gamma=2)},
+# losses = {'output_grapheme':focal_loss(alpha=.25, gamma=2), 
+#           'output_vowel':focal_loss(alpha=.25, gamma=2),
+#           'output_consonant':focal_loss(alpha=.25, gamma=2)}
+
+losses = {'output_grapheme':'categorical_crossentropy', 
+          'output_vowel':'categorical_crossentropy',
+          'output_consonant':'categorical_crossentropy'}
+
+model.compile(optimizer=optimizer, loss = losses,
                                  loss_weights = {'output_grapheme': 1,
                                                  'output_vowel': 0.3,
                                                  'output_consonant': 0.3}, 
@@ -199,7 +208,7 @@ model.compile(optimizer=optimizer, loss = {'output_grapheme':focal_loss(alpha=.2
                                           'output_vowel': ['accuracy', tf.keras.metrics.Recall()],
                                           'output_consonant': ['accuracy', tf.keras.metrics.Recall()] })
 
-model.save_weights("model_initial.h5")
+# model.save_weights("model_initial.h5")
 
 
 
@@ -233,11 +242,25 @@ EPOCHS = 7
 TEST_SIZE = 1./6
 msss = MultilabelStratifiedShuffleSplit(n_splits = EPOCHS, test_size = TEST_SIZE, random_state = 42)
 datagen =  ImageDataAugmentor(rescale=1./255, augment = AUGMENTATIONS, preprocess_input=None)
+datagen_val =  ImageDataAugmentor(rescale=1./255, preprocess_input=None)
 # msss = MultilabelStratifiedKFold
-n_epochs = 20
-checkpoints_load_name = 'work_dirs/efficientnet-b3_k_fold/weights/_efficientnet-b3__k_fold_shuffle_ep_0_019_0.9138.hdf5'
+n_epochs = 10
 
+start_points = ['_efficientnet-b3__k_fold_shuffle_ep_1_005_0.9728.hdf5',
+                '_efficientnet-b3__k_fold_shuffle_ep_1_005_0.9728.hdf5',
+                '_efficientnet-b3__k_fold_shuffle_ep_2_004_0.9741.hdf5',
+                '_efficientnet-b3__k_fold_shuffle_ep_3_005_0.9696.hdf5',
+                '_efficientnet-b3__k_fold_shuffle_ep_4_005_0.9740.hdf5',
+                '_efficientnet-b3__k_fold_shuffle_ep_5_004_0.9711.hdf5',
+                '_efficientnet-b3__k_fold_shuffle_ep_6_005_0.9696.hdf5']
+
+initial_lr = 0.000016
+decay_factor = 0.95
+step_size = 1
 for epoch_n, msss_splits in zip(range(0, EPOCHS), msss.split(X_train, Y_train)):
+    # if epoch_n < 1:
+    #      continue
+    checkpoints_load_name = 'work_dirs/efficientnet-b3_k_fold/weights/{}'.format(start_points[epoch_n])
     # model.load_weights("model_initial.h5")
     model.load_weights(checkpoints_load_name, by_name=True)
     train_idx = msss_splits[0]
@@ -249,10 +272,12 @@ for epoch_n, msss_splits in zip(range(0, EPOCHS), msss.split(X_train, Y_train)):
     print(len(full_df.iloc[train_idx]))
 
     checkpoints_save_name_pref = '{}_{}_'.format(weights_save_path,backbone_name)
-    checkpoints_save_name = checkpoints_save_name_pref + '_k_fold_shuffle_ep_'+str(epoch_n) + '_{epoch:03d}_{val_output_grapheme_acc:.4f}.hdf5'
+    checkpoints_save_name = checkpoints_save_name_pref + '_k_fold_shuffle_ep_tuning'+str(epoch_n) + '_{epoch:03d}_{val_output_grapheme_acc:.4f}.hdf5'
     tensorboard_save_name = '{}logs_{}/'.format(logs_save_path,backbone_name)
 
-    callbacks = [ModelCheckpoint(checkpoints_save_name , 
+    callbacks = [LearningRateScheduler(lambda x: initial_lr *
+                              decay_factor ** np.floor(x/step_size)),
+                ModelCheckpoint(checkpoints_save_name , 
                     monitor='val_loss', 
                     verbose=1,
                     save_best_only=True),
@@ -286,7 +311,7 @@ for epoch_n, msss_splits in zip(range(0, EPOCHS), msss.split(X_train, Y_train)):
                                                 class_mode="other",
                                                 target_size=(SIZE,SIZE))
 
-    val_generator = datagen.flow_from_dataframe(dataframe=full_df.iloc[valid_idx],
+    val_generator = datagen_val.flow_from_dataframe(dataframe=full_df.iloc[valid_idx],
                                                 directory=images_path_train,
                                                 color_mode='rgb',
                                                 x_col="image_id",
@@ -315,8 +340,8 @@ for epoch_n, msss_splits in zip(range(0, EPOCHS), msss.split(X_train, Y_train)):
 
      # Custom ReduceLRonPlateau
     # best_val_loss = CustomReduceLRonPlateau(model, full_history, epoch, best_val_loss)
-    del train_generator, val_generator, train_idx, valid_idx
-    gc.collect()
+    # del train_generator, val_generator, train_idx, valid_idx
+#    gc.collect()
 
 
 # plot_history(full_history, plots_save_path)
