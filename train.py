@@ -48,7 +48,7 @@ DATASET_PATH = '/home/rauf/datasets/bengali/'
 HEIGHT = 137
 WIDTH = 236
 SIZE = 128
-BATCH_SIZE = 64
+BATCH_SIZE = 8
 
 columns = ['grapheme_root', 'vowel_diacritic', 'consonant_diacritic']
 output_names = ['output_grapheme', 'output_vowel', 'output_consonant']
@@ -202,8 +202,8 @@ losses = {'output_grapheme':'categorical_crossentropy',
 
 model.compile(optimizer=optimizer, loss = losses,
                                  loss_weights = {'output_grapheme': 1,
-                                                 'output_vowel': 0.3,
-                                                 'output_consonant': 0.3}, 
+                                                 'output_vowel': 0.5,
+                                                 'output_consonant': 0.5}, 
                                  metrics={'output_grapheme': ['accuracy', tf.keras.metrics.Recall()],
                                           'output_vowel': ['accuracy', tf.keras.metrics.Recall()],
                                           'output_consonant': ['accuracy', tf.keras.metrics.Recall()] })
@@ -240,29 +240,30 @@ train_df, val_df = train_test_split(full_df, test_size=0.05)
 
 EPOCHS = 7
 TEST_SIZE = 1./6
-msss = MultilabelStratifiedShuffleSplit(n_splits = EPOCHS, test_size = TEST_SIZE, random_state = 42)
+# msss = MultilabelStratifiedShuffleSplit(n_splits = EPOCHS, test_size = TEST_SIZE, random_state = 42)
+msss = MultilabelStratifiedKFold(n_splits = EPOCHS, random_state = 42)
 datagen =  ImageDataAugmentor(rescale=1./255, augment = AUGMENTATIONS, preprocess_input=None)
 datagen_val =  ImageDataAugmentor(rescale=1./255, preprocess_input=None)
 # msss = MultilabelStratifiedKFold
 n_epochs = 10
 
-start_points = ['_efficientnet-b3__k_fold_shuffle_ep_1_005_0.9728.hdf5',
-                '_efficientnet-b3__k_fold_shuffle_ep_1_005_0.9728.hdf5',
-                '_efficientnet-b3__k_fold_shuffle_ep_2_004_0.9741.hdf5',
-                '_efficientnet-b3__k_fold_shuffle_ep_3_005_0.9696.hdf5',
-                '_efficientnet-b3__k_fold_shuffle_ep_4_005_0.9740.hdf5',
-                '_efficientnet-b3__k_fold_shuffle_ep_5_004_0.9711.hdf5',
-                '_efficientnet-b3__k_fold_shuffle_ep_6_005_0.9696.hdf5']
+# start_points = ['_efficientnet-b3__k_fold_shuffle_ep_1_005_0.9728.hdf5',
+#                 '_efficientnet-b3__k_fold_shuffle_ep_1_005_0.9728.hdf5',
+#                 '_efficientnet-b3__k_fold_shuffle_ep_2_004_0.9741.hdf5',
+#                 '_efficientnet-b3__k_fold_shuffle_ep_3_005_0.9696.hdf5',
+#                 '_efficientnet-b3__k_fold_shuffle_ep_4_005_0.9740.hdf5',
+#                 '_efficientnet-b3__k_fold_shuffle_ep_5_004_0.9711.hdf5',
+#                 '_efficientnet-b3__k_fold_shuffle_ep_6_005_0.9696.hdf5']
 
-initial_lr = 0.000016
+initial_lr = 0.00016
 decay_factor = 0.95
 step_size = 1
 for epoch_n, msss_splits in zip(range(0, EPOCHS), msss.split(X_train, Y_train)):
     # if epoch_n < 1:
     #      continue
-    checkpoints_load_name = 'work_dirs/efficientnet-b3_k_fold/weights/{}'.format(start_points[epoch_n])
-    # model.load_weights("model_initial.h5")
-    model.load_weights(checkpoints_load_name, by_name=True)
+    # checkpoints_load_name = 'work_dirs/efficientnet-b3_k_fold/weights/{}'.format(start_points[epoch_n])
+    # # model.load_weights("model_initial.h5")
+    # model.load_weights(checkpoints_load_name, by_name=True)
     train_idx = msss_splits[0]
     valid_idx = msss_splits[1]
     np.random.shuffle(train_idx)
